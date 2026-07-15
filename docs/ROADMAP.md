@@ -9,7 +9,7 @@
 | Sprint | What | Status | Gate met? |
 |---|---|---|---|
 | S0 | Scaffold + hygiene + CI + config + 30-line core + pack seam | ✅ done | ✅ (tests pass, pushed) |
-| S0.5 | The core — LangGraph graph + typed state + Postgres checkpointer + /api/chat | 🔄 in progress | ☐ |
+| S0.5 | The core — LangGraph graph + typed state + Postgres checkpointer + /api/chat | 🔄 code complete | 🟡 unit gates pass; Postgres proofs pending a Docker run |
 | S1 | The slots — LLM gateway, tools/MCP, context, guardrails, memory, vector | ☐ todo | ☐ |
 | S2 | The seam — flesh out pack loader + contract + example pack | ☐ todo | ☐ |
 | S3 | The surface + scale — streaming, queue, rate-limit, frontend shell, **async checkpointer** | ☐ todo | ☐ |
@@ -28,14 +28,14 @@
 - ✅ pushed to github.com/Y1ssh/raw
 **GATE ✅:** repo exists, CI wired, tests pass.
 
-## S0.5 — The core (Durable ReAct engine) 🔄 IN PROGRESS
+## S0.5 — The core (Durable ReAct engine) 🔄 CODE COMPLETE
 Wrap the 30-line loop in a LangGraph graph with durable, resumable, capped state. **Domain-clean.**
-- ☐ `core/state.py` — typed `AgentState` (Pydantic) + concurrency-safe reducers (messages [dict-safe], iteration, retry_count, tool_results, plan, error_reason)
-- ☐ `core/graph.py` — nodes (agent = reason/LLM slot, tools = no-op placeholder, error_handler) + `should_continue` structural router + iteration cap + PostgresSaver checkpointer
-- ☐ `api/routes.py` — `POST /api/chat` runs the graph for a thread_id, returns final state (build graph in FastAPI **lifespan**; wire lifespan into `main.py`)
-- ☐ `tests/test_graph.py` — 4 proofs: (1) reason→act→observe cycle, (2) state persists to Postgres, (3) resume after interruption, (4) iteration cap stops loops
-- ☐ add + pin `testcontainers[postgres]` (dev), run `uv lock`
-**GATE:** bare agent runs Reason→Act→Observe on LangGraph · state persists to Postgres · resumes after restart · iteration cap holds · pytest/ruff/mypy --strict pass.
+- ✅ `core/state.py` — typed `AgentState` (Pydantic) + concurrency-safe reducers: messages (`append_messages`, dict-safe), iteration/tool_results/retry_count (`operator.add`), plan/error_reason (`take_last`)
+- ✅ `core/graph.py` — `build_graph(call_model, max_iterations)`: nodes (agent = reason/injected LLM slot, tools = no-op placeholder, error_handler) + `should_continue` structural router + iteration cap; returns an uncompiled `StateGraph` so the caller supplies the checkpointer
+- ✅ `api/routes.py` — `POST /api/chat` runs the graph for a `thread_id`, returns final state; sync `PostgresSaver.invoke` driven off the loop via `run_in_threadpool` (D9). Graph built once in the FastAPI **lifespan** and stored on `app.state`; lifespan wired into `main.py` (`FastAPI(lifespan=…)`) with graceful checkpointer teardown
+- ✅ `tests/test_graph.py` — 4 proofs: (1) reason→act→observe cycle ✅, (2) state persists to Postgres 🟡, (3) resume after interruption 🟡, (4) iteration cap stops loops ✅. Proofs 2/3 skip-guard when Docker is absent (D10)
+- ✅ added + pinned `testcontainers[postgres]>=4.0` (dev), ran `uv lock` (testcontainers 4.14.2)
+**GATE 🟡:** `ruff` + `mypy --strict` + `pytest` all green (7 passed, 2 skipped). Reason→Act→Observe + iteration cap PROVEN via MemorySaver. **Postgres persist + resume proofs need a Docker run** (they skip in a Docker-less shell; run `pytest` where Docker is up — dev WSL2 / CI — to close the gate).
 
 ## S1 — The slots (swappable layers)
 - ☐ LLM gateway slot — LiteLLM wrapper (routing, fallback); this is the concrete `call_model` the graph injects
