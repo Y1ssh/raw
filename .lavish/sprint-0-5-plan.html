@@ -1,0 +1,684 @@
+<!doctype html>
+<html lang="en" data-theme="luxury">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sprint 0.5 — Durable ReAct Core</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/daisyui@5.5.19/daisyui.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/daisyui@5.5.19/themes.css">
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.2.4/dist/index.global.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    :where(.grid, .flex) > * { min-width: 0; }
+    :where(p, h1, h2, h3, h4, h5, h6, li, dd, td, th, .badge, code, .mono, .alert span) { overflow-wrap: anywhere; word-break: break-word; }
+    :where(.alert) { min-width: 0; }
+    :where(.alert) > * { min-width: 0; }
+    :where(img, svg, video, canvas) { max-width: 100%; height: auto; }
+    .mermaid { background: transparent; }
+    .mermaid svg { max-width: 100%; height: auto; }
+    .pierre-wrap { font-size: 12.5px; border-radius: 0.75rem; overflow: hidden; border: 1px solid var(--color-base-content, #8882)/10; }
+    .step-num { font-variant-numeric: tabular-nums; }
+    code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  </style>
+</head>
+<body class="bg-base-200 text-base-content">
+
+<main class="mx-auto max-w-6xl p-5 lg:p-10 space-y-10">
+
+  <!-- ============ HERO ============ -->
+  <header class="hero bg-base-100 rounded-box border border-base-content/10 shadow-sm">
+    <div class="hero-content flex-col items-start gap-4 py-8 w-full">
+      <div class="flex flex-wrap items-center gap-2">
+        <span class="badge badge-primary badge-lg">Sprint 0.5</span>
+        <span class="badge badge-soft badge-info">Plan — no code yet</span>
+        <span class="badge badge-soft">domain-clean base</span>
+        <span class="badge badge-soft badge-warning">needs your approval</span>
+      </div>
+      <h1 class="text-4xl lg:text-5xl font-bold leading-snug pb-1">Durable ReAct Core</h1>
+      <p class="text-lg opacity-80 max-w-3xl">
+        Wrap the 30-line <code class="mono">core/loop.py</code> in a <strong>LangGraph</strong> graph with
+        typed state + concurrent-safe reducers, a <strong>Postgres checkpointer</strong> (externalized state →
+        resumable → horizontally scalable), and a <code class="mono">POST /api/chat</code> endpoint.
+        The loop shape stays identical — we add durability, resumability, and an iteration cap.
+      </p>
+      <div class="stats stats-vertical sm:stats-horizontal bg-base-200 w-full mt-2">
+        <div class="stat">
+          <div class="stat-title">Files touched</div>
+          <div class="stat-value text-2xl">4</div>
+          <div class="stat-desc">state · graph · routes · tests</div>
+        </div>
+        <div class="stat">
+          <div class="stat-title">New runtime deps</div>
+          <div class="stat-value text-2xl">0</div>
+          <div class="stat-desc">all already pinned</div>
+        </div>
+        <div class="stat">
+          <div class="stat-title">Test proofs</div>
+          <div class="stat-value text-2xl">4</div>
+          <div class="stat-desc">react · persist · resume · cap</div>
+        </div>
+        <div class="stat">
+          <div class="stat-title">Gates</div>
+          <div class="stat-value text-2xl">3</div>
+          <div class="stat-desc">pytest · ruff · mypy --strict</div>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- ============ GOAL / CURRENT / TARGET ============ -->
+  <section class="grid gap-4 md:grid-cols-3">
+    <div class="card card-border bg-base-100">
+      <div class="card-body">
+        <h2 class="card-title text-base"><span class="badge badge-primary badge-sm">Goal</span></h2>
+        <p class="text-sm opacity-90">Turn the pedagogical loop into a <strong>production execution engine</strong>:
+          durable state, resumable after crash, hard iteration cap — the machinery from
+          <code class="mono">BASE-VS-PACK.md</code> rows <em>Loop</em> + <em>State</em> + <em>Guardrails</em>.</p>
+      </div>
+    </div>
+    <div class="card card-border bg-base-100">
+      <div class="card-body">
+        <h2 class="card-title text-base"><span class="badge badge-ghost badge-sm">Current state</span></h2>
+        <ul class="text-sm opacity-90 space-y-1 list-disc pl-4">
+          <li><code class="mono">core/loop.py</code> — the 30-line loop ✅</li>
+          <li><code class="mono">core/state.py</code> — stub (messages + iteration only)</li>
+          <li><code class="mono">core/graph.py</code> — empty TODO</li>
+          <li><code class="mono">api/routes.py</code> — empty router</li>
+          <li><code class="mono">settings.py</code> — has <code class="mono">postgres_url</code>, <code class="mono">max_iterations</code> ✅</li>
+        </ul>
+      </div>
+    </div>
+    <div class="card card-border bg-base-100 border-primary/40">
+      <div class="card-body">
+        <h2 class="card-title text-base"><span class="badge badge-success badge-sm">Target behavior</span></h2>
+        <ul class="text-sm opacity-90 space-y-1 list-disc pl-4">
+          <li>Graph: <code class="mono">agent → tools → agent</code>, capped</li>
+          <li>State survives process restart (Postgres)</li>
+          <li>Interrupt mid-run, resume on another worker</li>
+          <li><code class="mono">POST /api/chat</code> runs a thread, returns final state</li>
+          <li><strong>Zero</strong> tools / prompts / validators (those are packs)</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ THE GRAPH (diagram) ============ -->
+  <section class="card card-border bg-base-100">
+    <div class="card-body">
+      <h2 class="text-2xl font-bold">The graph — what we're building</h2>
+      <p class="opacity-80 max-w-3xl">Nodes are deterministic code; the LLM lives only inside <code class="mono">agent</code>.
+        Every edge routing decision is <strong>structural</strong> (in <code class="mono">should_continue</code>), not prompt-based —
+        principle #6. The whole graph is compiled with a <code class="mono">PostgresSaver</code> checkpointer so every
+        super-step is persisted.</p>
+
+      <div class="rounded-box bg-base-200 p-4 mt-2 overflow-x-auto">
+        <pre class="mermaid">
+flowchart TD
+    START([START]) --> agent
+    agent["<b>agent</b> · REASON<br/>call_model(messages) — the llm SLOT<br/>emits iteration delta (+1)"]
+    agent -->|success| cont{{"<b>should_continue</b><br/>structural router"}}
+    agent -.->|exception| err
+
+    cont -->|"tool_calls present"| tools
+    cont -->|"no tool_calls"| done([END])
+    cont -->|"iteration ≥ settings.max_iterations"| done
+
+    tools["<b>tools</b> · ACT + OBSERVE<br/>no-op placeholder (stub ToolNode)<br/>packs supply the real MCP tools<br/>appends to tool_results"]
+    tools --> agent
+
+    err["<b>error_handler</b><br/>set error_reason<br/>emit retry_count delta (+1)"]
+    err --> retry{{"retry_count &lt; max_iterations?"}}
+    retry -->|yes| agent
+    retry -->|no| done
+
+    classDef llm fill:#7c3aed22,stroke:#7c3aed,stroke-width:2px;
+    classDef guard fill:#d9770622,stroke:#d97706,stroke-width:2px;
+    classDef pack fill:#0891b222,stroke:#0891b2,stroke-dasharray:4 3;
+    class agent llm;
+    class cont,retry,err guard;
+    class tools pack;
+        </pre>
+      </div>
+      <div class="flex flex-wrap gap-3 mt-3 text-xs">
+        <span class="flex items-center gap-1"><span class="inline-block w-3 h-3 rounded" style="background:#7c3aed"></span> LLM slot (agent)</span>
+        <span class="flex items-center gap-1"><span class="inline-block w-3 h-3 rounded" style="background:#d97706"></span> guardrail / router</span>
+        <span class="flex items-center gap-1"><span class="inline-block w-3 h-3 rounded border border-dashed" style="background:#0891b2"></span> pack seam (placeholder now)</span>
+      </div>
+      <div role="alert" class="alert alert-info alert-soft mt-4">
+        <span class="text-sm">Whole graph compiled as
+          <code class="mono">build_graph(checkpointer, call_model).compile(checkpointer=PostgresSaver.from_conn_string(settings.postgres_url))</code>.
+          The checkpointer is what makes it resumable — it's the <em>State</em> + <em>Memory (short)</em> rows of the base contract.</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ FILE 1: state.py ============ -->
+  <section class="space-y-3">
+    <div class="flex items-baseline gap-3 flex-wrap">
+      <h2 class="text-2xl font-bold">1 · <code class="mono">core/state.py</code></h2>
+      <span class="badge badge-soft">typed AgentState + reducers</span>
+    </div>
+    <p class="opacity-80 max-w-3xl">Pydantic <code class="mono">BaseModel</code> state. Each field annotated with a
+      <strong>reducer</strong> so concurrent writes in one super-step merge deterministically instead of clobbering.
+      Nodes emit <em>deltas</em> (e.g. <code class="mono">{"iteration": 1}</code>) and <code class="mono">operator.add</code>
+      sums them — the canonical LangGraph pattern for concurrency-safe counters.</p>
+
+    <div class="overflow-x-auto rounded-box border border-base-content/10 bg-base-100">
+      <table class="table table-sm">
+        <thead><tr><th>Field</th><th>Type</th><th>Reducer</th><th>Why (concurrent-update semantics)</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">messages</td><td class="mono">list[dict]</td><td><span class="badge badge-soft badge-primary">append_messages</span></td><td><strong>custom</strong> dict-append reducer — appends & de-dupes by id, keeps <code class="mono">list[dict]</code> (not LangChain objects) so dict-based tests pass</td></tr>
+          <tr><td class="mono">iteration</td><td class="mono">int</td><td><span class="badge badge-soft badge-success">operator.add</span></td><td>nodes emit <code class="mono">+1</code> deltas → summed, never lost on a race</td></tr>
+          <tr><td class="mono">plan</td><td class="mono">str | None</td><td><span class="badge badge-soft">take_last</span></td><td>last non-None write wins (planner overwrites, no error on concurrent set)</td></tr>
+          <tr><td class="mono">tool_results</td><td class="mono">list[dict]</td><td><span class="badge badge-soft badge-success">operator.add</span></td><td>concurrent tool executions <strong>concatenate</strong> — none dropped</td></tr>
+          <tr><td class="mono">error_reason</td><td class="mono">str | None</td><td><span class="badge badge-soft">take_last</span></td><td>error_handler sets it; take_last avoids "concurrent write, no reducer" crash</td></tr>
+          <tr><td class="mono">retry_count</td><td class="mono">int</td><td><span class="badge badge-soft badge-success">operator.add</span></td><td>delta-based, same as iteration — bounded retry accounting</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div id="file-state" class="pierre-wrap"></div>
+  </section>
+
+  <!-- ============ FILE 2: graph.py ============ -->
+  <section class="space-y-3">
+    <div class="flex items-baseline gap-3 flex-wrap">
+      <h2 class="text-2xl font-bold">2 · <code class="mono">core/graph.py</code></h2>
+      <span class="badge badge-soft">nodes · edges · checkpointer</span>
+    </div>
+    <p class="opacity-80 max-w-3xl">
+      <code class="mono">build_graph(call_model)</code> takes the model fn as a <strong>slot</strong> (reusing
+      <code class="mono">ModelFn</code> from <code class="mono">loop.py</code>) so the base stays domain-clean and tests inject a fake.
+      The <code class="mono">tools</code> node is a documented no-op placeholder — packs replace it with a real MCP-backed ToolNode.
+    </p>
+    <div id="file-graph" class="pierre-wrap"></div>
+  </section>
+
+  <!-- ============ FILE 3: routes.py ============ -->
+  <section class="space-y-3">
+    <div class="flex items-baseline gap-3 flex-wrap">
+      <h2 class="text-2xl font-bold">3 · <code class="mono">api/routes.py</code></h2>
+      <span class="badge badge-soft">POST /api/chat</span>
+    </div>
+    <p class="opacity-80 max-w-3xl">Runs the graph for a <code class="mono">thread_id</code> and returns the final state.
+      Graph + checkpointer are built once in the FastAPI <code class="mono">lifespan</code> and stored on
+      <code class="mono">app.state</code> (mirrors the reference's <code class="mono">create_graph()</code> singleton).
+      Sync <code class="mono">PostgresSaver</code> is driven off the event loop via <code class="mono">run_in_threadpool</code>.</p>
+    <div id="file-routes" class="pierre-wrap"></div>
+  </section>
+
+  <!-- ============ FILE 4: tests ============ -->
+  <section class="space-y-3">
+    <div class="flex items-baseline gap-3 flex-wrap">
+      <h2 class="text-2xl font-bold">4 · <code class="mono">tests/test_graph.py</code></h2>
+      <span class="badge badge-soft">4 proofs</span>
+    </div>
+
+    <div class="overflow-x-auto rounded-box border border-base-content/10 bg-base-100">
+      <table class="table">
+        <thead><tr><th class="w-8">#</th><th>Proves</th><th>How</th><th>Checkpointer</th></tr></thead>
+        <tbody>
+          <tr>
+            <td class="step-num font-bold">1</td>
+            <td><strong>reason→act→observe runs</strong></td>
+            <td>fake <code class="mono">call_model</code> returns a tool_call once then finishes; assert cycle went <code class="mono">agent→tools→agent</code> and final has the observation</td>
+            <td><span class="badge badge-ghost badge-sm">MemorySaver</span></td>
+          </tr>
+          <tr>
+            <td class="step-num font-bold">2</td>
+            <td><strong>state persists to Postgres</strong></td>
+            <td>invoke on thread <code class="mono">t1</code>; build a <em>fresh</em> graph on the same DB; <code class="mono">get_state(t1)</code> returns the messages</td>
+            <td><span class="badge badge-primary badge-sm">PostgresSaver</span></td>
+          </tr>
+          <tr>
+            <td class="step-num font-bold">3</td>
+            <td><strong>resume after interruption</strong></td>
+            <td>compile with <code class="mono">interrupt_before=["tools"]</code>; invoke stops, <code class="mono">state.next == ("tools",)</code>; <code class="mono">invoke(None, cfg)</code> completes</td>
+            <td><span class="badge badge-primary badge-sm">PostgresSaver</span></td>
+          </tr>
+          <tr>
+            <td class="step-num font-bold">4</td>
+            <td><strong>iteration cap stops infinite loops</strong></td>
+            <td>fake model <em>always</em> returns tool_calls; assert run terminates with <code class="mono">iteration == max_iterations</code> (no hang)</td>
+            <td><span class="badge badge-ghost badge-sm">MemorySaver</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div role="alert" class="alert alert-warning alert-soft">
+      <span class="text-sm">Tests 2 &amp; 3 need a real Postgres. Plan: spin one up hermetically with
+        <code class="mono">testcontainers[postgres]</code> (new <strong>dev-only</strong> dep), and
+        <code class="mono">pytest.skip()</code> if Docker is unavailable so <code class="mono">pytest</code> stays green everywhere.</span>
+    </div>
+    <div id="file-tests" class="pierre-wrap"></div>
+  </section>
+
+  <!-- ============ DEPS ============ -->
+  <section class="card card-border bg-base-100">
+    <div class="card-body">
+      <h2 class="text-2xl font-bold">Dependencies to pin</h2>
+      <div class="overflow-x-auto rounded-box border border-base-content/10">
+        <table class="table table-zebra">
+          <thead><tr><th>Package</th><th>Constraint</th><th>Group</th><th>Status</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">langgraph</td><td class="mono">&gt;=0.2</td><td>runtime</td><td><span class="badge badge-success badge-soft">already pinned</span></td></tr>
+            <tr><td class="mono">langgraph-checkpoint-postgres</td><td class="mono">&gt;=2.0</td><td>runtime</td><td><span class="badge badge-success badge-soft">already pinned</span></td></tr>
+            <tr><td class="mono">psycopg[binary]</td><td class="mono">&gt;=3.1</td><td>runtime</td><td><span class="badge badge-success badge-soft">already pinned</span></td></tr>
+            <tr><td class="mono">testcontainers[postgres]</td><td class="mono">&gt;=4.0</td><td>dev</td><td><span class="badge badge-warning badge-soft">NEW — add & pin</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="text-sm opacity-70 mt-2"><code class="mono">ToolNode</code>, <code class="mono">MemorySaver</code>, <code class="mono">add_messages</code>,
+        <code class="mono">PostgresSaver</code> all ship inside the already-pinned langgraph packages → <strong>zero new runtime deps</strong>.
+        Lock with <code class="mono">uv lock</code>.</p>
+    </div>
+  </section>
+
+  <!-- ============ DOMAIN-CLEAN GUARDRAILS ============ -->
+  <section class="grid gap-4 md:grid-cols-2">
+    <div class="card card-border bg-base-100 border-success/40">
+      <div class="card-body">
+        <h2 class="card-title text-success">✓ Base provides (this sprint)</h2>
+        <ul class="text-sm space-y-1 list-disc pl-4 opacity-90">
+          <li>The graph wiring (nodes, edges, router)</li>
+          <li>Typed state + concurrency-safe reducers</li>
+          <li>Postgres checkpointer (resumable, scalable)</li>
+          <li>Iteration cap = the #1 guardrail</li>
+          <li>error_handler node (contain the blast radius)</li>
+          <li><code class="mono">call_model</code> as an injectable <em>slot</em></li>
+        </ul>
+      </div>
+    </div>
+    <div class="card card-border bg-base-100 border-error/40">
+      <div class="card-body">
+        <h2 class="card-title text-error">✗ NOT in the base (packs own these)</h2>
+        <ul class="text-sm space-y-1 list-disc pl-4 opacity-90">
+          <li>Real tools / MCP servers → <span class="mono">tools</span> stays a stub</li>
+          <li>System prompt / persona</li>
+          <li>Validator (the moat)</li>
+          <li>Domain rules & themes</li>
+          <li>A concrete LLM adapter → that's the Sprint 1 <span class="mono">llm</span> slot</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ REFERENCE MAPPING ============ -->
+  <section class="card card-border bg-base-100">
+    <div class="card-body">
+      <h2 class="text-2xl font-bold">What we borrow from the reference <span class="text-sm opacity-60">(wiring only, no domain code)</span></h2>
+      <p class="opacity-80 text-sm max-w-3xl">From
+        <code class="mono">wassim249/fastapi-langgraph-agent-production-ready-template</code> → <code class="mono">app/core/langgraph/graph.py</code>.</p>
+      <div class="overflow-x-auto rounded-box border border-base-content/10 mt-2">
+        <table class="table table-sm">
+          <thead><tr><th>Reference pattern</th><th>How we adapt it (domain-clean)</th></tr></thead>
+          <tbody>
+            <tr><td><code class="mono">StateGraph(GraphState)</code> + <code class="mono">Annotated[list, add_messages]</code></td><td>Same, on our richer <code class="mono">AgentState</code> with 6 reduced fields</td></tr>
+            <tr><td><code class="mono">_chat</code> node returns <code class="mono">Command(goto=…)</code></td><td>Split into <code class="mono">agent</code> node + explicit <code class="mono">should_continue</code> conditional edge (clearer for teaching)</td></tr>
+            <tr><td><code class="mono">AsyncPostgresSaver(pool)</code> + <code class="mono">.setup()</code>, cached graph</td><td>Sync <code class="mono">PostgresSaver.from_conn_string(settings.postgres_url)</code> built once in FastAPI <code class="mono">lifespan</code></td></tr>
+            <tr><td><code class="mono">tools_by_name</code>, real DuckDuckGo tool, <code class="mono">ask_human</code></td><td><strong>Dropped</strong> — those are domain. Our <code class="mono">tools</code> node is a no-op placeholder</td></tr>
+            <tr><td>Resume via <code class="mono">graph.aget_state</code> / <code class="mono">state.next</code></td><td>Same mechanism → powers test #3 (interrupt + resume)</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ DECISIONS / OPEN QUESTIONS (input) ============ -->
+  <section class="card card-border bg-base-100 border-warning/50">
+    <div class="card-body">
+      <h2 class="text-2xl font-bold">Decisions I need you to confirm</h2>
+      <p class="opacity-80 text-sm">Defaults below are my recommendation. Pick, or annotate any element to override, then <strong>Send to Agent</strong>.</p>
+
+      <!-- Q1 -->
+      <form data-lavish-question="messages" class="rounded-box bg-base-200 p-4 mt-2 space-y-2"
+            onsubmit="event.preventDefault(); const c = new FormData(event.currentTarget).get('messages'); if (c) window.lavish.queuePrompt('Message representation in AgentState: ' + c, { tag: 'choice', text: 'Messages: ' + c, element: event.currentTarget, data: { question: 'messages', answer: c } });">
+        <h3 class="font-bold">Q1 — Message representation in state <span class="badge badge-error badge-sm">key fork</span></h3>
+        <p class="text-sm opacity-80">The reference uses LangChain <code class="mono">BaseMessage</code> objects (enables prebuilt <code class="mono">ToolNode</code>).
+          <code class="mono">loop.py</code> uses plain OpenAI-style <strong>dicts</strong> (provider-agnostic, matches LiteLLM).</p>
+        <label class="flex items-start gap-2 cursor-pointer"><input type="radio" name="messages" value="plain dicts (recommended)" class="radio radio-sm radio-primary mt-1" checked>
+          <span class="text-sm"><strong>Plain dicts</strong> (recommended) — provider-agnostic, matches <code class="mono">loop.py</code> &amp; LiteLLM; <code class="mono">tools</code> is a dict-based placeholder node standing in for a ToolNode.</span></label>
+        <label class="flex items-start gap-2 cursor-pointer"><input type="radio" name="messages" value="LangChain BaseMessage" class="radio radio-sm mt-1">
+          <span class="text-sm"><strong>LangChain <code class="mono">BaseMessage</code></strong> — lets the placeholder be a literal <code class="mono">ToolNode([])</code>, but couples the base to LangChain message types.</span></label>
+        <button type="submit" class="btn btn-sm btn-primary mt-1">Queue this answer</button>
+      </form>
+
+      <!-- Q2 -->
+      <form data-lavish-question="checkpointer" class="rounded-box bg-base-200 p-4 mt-3 space-y-2"
+            onsubmit="event.preventDefault(); const c = new FormData(event.currentTarget).get('checkpointer'); if (c) window.lavish.queuePrompt('Checkpointer driver: ' + c, { tag: 'choice', text: 'Checkpointer: ' + c, element: event.currentTarget, data: { question: 'checkpointer', answer: c } });">
+        <h3 class="font-bold">Q2 — Sync vs async Postgres checkpointer</h3>
+        <label class="flex items-start gap-2 cursor-pointer"><input type="radio" name="checkpointer" value="sync PostgresSaver + run_in_threadpool (recommended)" class="radio radio-sm radio-primary mt-1" checked>
+          <span class="text-sm"><strong>Sync <code class="mono">PostgresSaver</code></strong> (recommended) — matches your prompt's wording; driven off the loop via <code class="mono">run_in_threadpool</code>. Simplest for the base.</span></label>
+        <label class="flex items-start gap-2 cursor-pointer"><input type="radio" name="checkpointer" value="AsyncPostgresSaver + pool" class="radio radio-sm mt-1">
+          <span class="text-sm"><strong><code class="mono">AsyncPostgresSaver</code></strong> + connection pool — fully async like the reference; more moving parts now.</span></label>
+        <button type="submit" class="btn btn-sm btn-primary mt-1">Queue this answer</button>
+      </form>
+
+      <!-- Q3 -->
+      <form data-lavish-question="pgtest" class="rounded-box bg-base-200 p-4 mt-3 space-y-2"
+            onsubmit="event.preventDefault(); const c = new FormData(event.currentTarget).get('pgtest'); if (c) window.lavish.queuePrompt('Postgres test strategy: ' + c, { tag: 'choice', text: 'PG tests: ' + c, element: event.currentTarget, data: { question: 'pgtest', answer: c } });">
+        <h3 class="font-bold">Q3 — How the Postgres tests get a database</h3>
+        <label class="flex items-start gap-2 cursor-pointer"><input type="radio" name="pgtest" value="testcontainers, skip if no Docker (recommended)" class="radio radio-sm radio-primary mt-1" checked>
+          <span class="text-sm"><strong>testcontainers</strong> (recommended) — hermetic ephemeral Postgres; <code class="mono">skip</code> if Docker absent so CI/local both pass.</span></label>
+        <label class="flex items-start gap-2 cursor-pointer"><input type="radio" name="pgtest" value="RAW_POSTGRES_URL env, skip if unset" class="radio radio-sm mt-1">
+          <span class="text-sm">Use an <strong>env <code class="mono">RAW_POSTGRES_URL</code></strong>, skip if unset — no new dep, but not hermetic.</span></label>
+        <button type="submit" class="btn btn-sm btn-primary mt-1">Queue this answer</button>
+      </form>
+    </div>
+  </section>
+
+  <!-- ============ APPROVE ============ -->
+  <section class="card bg-primary text-primary-content">
+    <div class="card-body items-center text-center">
+      <h2 class="card-title text-2xl">Approve to build</h2>
+      <p class="max-w-2xl opacity-90">On approval I'll implement all 4 files with the recommended defaults (or your overrides),
+        add &amp; pin <code class="mono">testcontainers[postgres]</code>, run <code class="mono">uv lock</code>, and make
+        <strong>pytest + ruff + mypy --strict</strong> all pass before reporting back.</p>
+      <div class="card-actions mt-2">
+        <span data-lavish-action class="btn btn-neutral"
+          onclick="window.lavish.queuePrompt('Approved — build Sprint 0.5 with the recommended defaults (plain dicts, sync PostgresSaver, testcontainers). Implement all 4 files, pin deps, run pytest + ruff + mypy.', { tag: 'approval', text: 'Approved: build with recommended defaults' }); window.lavish.sendQueuedPrompts();">
+          ✓ Approve — recommended defaults
+        </span>
+      </div>
+      <p class="text-xs opacity-70 mt-1">(Or queue any Q1–Q3 overrides above first, then click Approve / Send to Agent.)</p>
+    </div>
+  </section>
+
+</main>
+
+<!-- ============ @pierre/diffs code rendering ============ -->
+<script type="module">
+  import { File } from "https://esm.sh/@pierre/diffs@1.2.10?bundle";
+  const options = { theme: { light: "github-light", dark: "github-dark" }, themeType: "dark", overflow: "wrap" };
+
+  const files = {
+    "file-state": { name: "core/state.py", contents:
+`"""Typed agent state (Pydantic). ~60% of production incidents trace to state — get this right.
+
+Reducers make concurrent writes in one super-step MERGE deterministically instead of clobbering.
+Nodes emit deltas (e.g. {"iteration": 1}); operator.add sums them across fan-in.
+"""
+
+import operator
+from typing import Annotated, Any
+
+from pydantic import BaseModel, Field
+
+
+def append_messages(
+    left: list[dict[str, Any]], right: list[dict[str, Any]] | dict[str, Any]
+) -> list[dict[str, Any]]:
+    """Append dict messages, de-duping by 'id' — keeps state.messages as list[dict].
+
+    We DON'T use langgraph's add_messages: it coerces dicts into LangChain BaseMessage
+    objects, which would break the provider-agnostic dict contract from loop.py.
+    """
+    incoming = right if isinstance(right, list) else [right]
+    merged = list(left)
+    index_by_id = {m["id"]: i for i, m in enumerate(merged) if "id" in m}
+    for msg in incoming:
+        mid = msg.get("id")
+        if mid is not None and mid in index_by_id:
+            merged[index_by_id[mid]] = msg  # replace by id
+        else:
+            if mid is not None:
+                index_by_id[mid] = len(merged)
+            merged.append(msg)
+    return merged
+
+
+def take_last(current: Any, update: Any) -> Any:
+    """Last non-None write wins — a reducer so concurrent overwrites don't raise."""
+    return update if update is not None else current
+
+
+class AgentState(BaseModel):
+    # append + de-dupe by id, staying list[dict] (custom, not add_messages)
+    messages: Annotated[list[dict[str, Any]], append_messages] = Field(default_factory=list)
+    # delta-summed counters — race-safe (the loop cap reads iteration)
+    iteration: Annotated[int, operator.add] = 0
+    retry_count: Annotated[int, operator.add] = 0
+    # concurrent tool executions concatenate — none dropped
+    tool_results: Annotated[list[dict[str, Any]], operator.add] = Field(default_factory=list)
+    # single-writer overwrites, guarded by a reducer
+    plan: Annotated[str | None, take_last] = None
+    error_reason: Annotated[str | None, take_last] = None
+` },
+
+    "file-graph": { name: "core/graph.py", contents:
+`"""The LangGraph graph — State + Nodes + Edges, checkpointed to Postgres.
+
+Wraps core/loop.py's reason->act->observe shape with durable, resumable, capped execution.
+Domain-clean: 'tools' is a no-op placeholder; real tools come from packs. The model is a SLOT.
+"""
+
+from typing import Any
+
+from langgraph.checkpoint.base import BaseCheckpointSaver
+from langgraph.graph import END, START, StateGraph
+
+from raw.config import get_settings
+from raw.core.loop import ModelFn  # reuse the loop's model-fn type
+from raw.core.state import AgentState
+
+settings = get_settings()
+
+
+def _default_model(_messages: list[dict[str, Any]]) -> dict[str, Any]:
+    """Placeholder model. The real adapter is the Sprint 1 'llm' slot / a pack."""
+    raise NotImplementedError("wire the llm slot (Sprint 1) or inject call_model in tests")
+
+
+def build_graph(
+    checkpointer: BaseCheckpointSaver,
+    call_model: ModelFn = _default_model,
+):
+    """Compile the agent graph. call_model is injected (slot) so the base stays domain-clean."""
+
+    def agent(state: AgentState) -> dict[str, Any]:
+        """REASON: call the model; emit an iteration delta. Route errors structurally."""
+        try:
+            response = call_model(state.messages)
+            return {"messages": [response], "iteration": 1}
+        except Exception as exc:  # contain the blast radius -> error_handler
+            return {"error_reason": str(exc), "iteration": 1}
+
+    def tools(state: AgentState) -> dict[str, Any]:
+        """ACT + OBSERVE — no-op placeholder standing in for a ToolNode.
+
+        Packs replace this with a real MCP-backed ToolNode. For now it emits an empty
+        observation per tool call so the agent<->tools cycle is exercisable end to end.
+        """
+        last = state.messages[-1] if state.messages else {}
+        calls = last.get("tool_calls") or []
+        observations = [
+            {"role": "tool", "tool_call_id": c.get("id", ""), "content": ""} for c in calls
+        ]
+        return {"messages": observations, "tool_results": observations}
+
+    def error_handler(state: AgentState) -> dict[str, Any]:
+        """Guardrail node: account a retry, clear the error so we can loop back."""
+        return {"retry_count": 1, "error_reason": None}
+
+    def should_continue(state: AgentState) -> str:
+        """Structural router (principle #6) — not a prompt decision."""
+        if state.error_reason:
+            return "error_handler"
+        if state.iteration >= settings.max_iterations:  # #1 guardrail: no infinite loops
+            return END
+        last = state.messages[-1] if state.messages else {}
+        return "tools" if last.get("tool_calls") else END
+
+    def after_error(state: AgentState) -> str:
+        return "agent" if state.retry_count < settings.max_iterations else END
+
+    graph = StateGraph(AgentState)
+    graph.add_node("agent", agent)
+    graph.add_node("tools", tools)
+    graph.add_node("error_handler", error_handler)
+
+    graph.add_edge(START, "agent")
+    graph.add_conditional_edges(
+        "agent", should_continue, {"tools": "tools", "error_handler": "error_handler", END: END}
+    )
+    graph.add_edge("tools", "agent")
+    graph.add_conditional_edges("error_handler", after_error, {"agent": "agent", END: END})
+
+    return graph.compile(checkpointer=checkpointer)
+` },
+
+    "file-routes": { name: "api/routes.py", contents:
+`"""Agent endpoints. Sprint 0.5: POST /api/chat runs the graph for a thread and returns final state."""
+
+from contextlib import asynccontextmanager
+from typing import Any
+
+from fastapi import APIRouter, FastAPI, Request
+from fastapi.concurrency import run_in_threadpool
+from langgraph.checkpoint.postgres import PostgresSaver
+from pydantic import BaseModel
+
+from raw.config import get_settings
+from raw.core.graph import build_graph
+
+router = APIRouter(prefix="/api", tags=["agent"])
+
+
+class ChatRequest(BaseModel):
+    thread_id: str
+    message: str
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Build the graph + Postgres checkpointer once (like the reference's cached graph)."""
+    settings = get_settings()
+    with PostgresSaver.from_conn_string(settings.postgres_url) as checkpointer:
+        checkpointer.setup()  # create checkpoint tables if absent
+        app.state.graph = build_graph(checkpointer)  # call_model wired by the llm slot / pack
+        yield
+
+
+@router.post("/chat")
+async def chat(req: ChatRequest, request: Request) -> dict[str, Any]:
+    """Run the agent graph for a thread_id; return the final AgentState."""
+    graph = request.app.state.graph
+    config = {"configurable": {"thread_id": req.thread_id}}
+    user_msg = {"role": "user", "content": req.message}
+    # sync PostgresSaver -> drive off the event loop
+    final_state = await run_in_threadpool(graph.invoke, {"messages": [user_msg]}, config)
+    return final_state
+` },
+
+    "file-tests": { name: "tests/test_graph.py", contents:
+`"""Sprint 0.5 proofs: react cycle, Postgres persistence, resume, iteration cap."""
+
+from typing import Any
+
+import pytest
+from langgraph.checkpoint.memory import MemorySaver
+
+from raw.core.graph import build_graph
+
+
+def _one_shot_model():
+    """Fake model: emit a tool_call on the first turn, then finish. -> react cycle."""
+    calls = {"n": 0}
+
+    def call_model(_messages: list[dict[str, Any]]) -> dict[str, Any]:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return {"role": "assistant", "tool_calls": [{"id": "c1", "name": "noop", "args": {}}]}
+        return {"role": "assistant", "content": "done"}
+
+    return call_model
+
+
+def test_reason_act_observe_runs() -> None:
+    graph = build_graph(MemorySaver(), _one_shot_model())
+    cfg = {"configurable": {"thread_id": "t-react"}}
+    final = graph.invoke({"messages": [{"role": "user", "content": "hi"}]}, cfg)
+    roles = [m.get("role") for m in final["messages"]]
+    assert "tool" in roles            # OBSERVE happened -> agent->tools->agent cycled
+    assert final["messages"][-1]["content"] == "done"
+
+
+def test_iteration_cap_stops_infinite_loops() -> None:
+    def never_finishes(_messages: list[dict[str, Any]]) -> dict[str, Any]:
+        return {"role": "assistant", "tool_calls": [{"id": "x", "name": "noop", "args": {}}]}
+
+    graph = build_graph(MemorySaver(), never_finishes)
+    cfg = {"configurable": {"thread_id": "t-cap"}, "recursion_limit": 100}
+    final = graph.invoke({"messages": [{"role": "user", "content": "go"}]}, cfg)
+    from raw.config import get_settings
+    assert final["iteration"] >= get_settings().max_iterations  # capped, did not hang
+
+
+# --- Postgres-backed proofs (hermetic via testcontainers; skip if Docker absent) ---
+
+@pytest.fixture
+def pg_saver():
+    try:
+        from testcontainers.postgres import PostgresContainer
+    except ImportError:
+        pytest.skip("testcontainers not installed")
+    from langgraph.checkpoint.postgres import PostgresSaver
+    with PostgresContainer("postgres:16") as pg:
+        url = pg.get_connection_url().replace("postgresql+psycopg2", "postgresql")
+        with PostgresSaver.from_conn_string(url) as saver:
+            saver.setup()
+            yield url
+
+
+def test_state_persists_to_postgres(pg_saver) -> None:
+    from langgraph.checkpoint.postgres import PostgresSaver
+    cfg = {"configurable": {"thread_id": "t-persist"}}
+    with PostgresSaver.from_conn_string(pg_saver) as s1:
+        build_graph(s1, _one_shot_model()).invoke(
+            {"messages": [{"role": "user", "content": "remember me"}]}, cfg
+        )
+    # fresh graph, same DB -> state was externalized, not in-process
+    with PostgresSaver.from_conn_string(pg_saver) as s2:
+        snap = build_graph(s2, _one_shot_model()).get_state(cfg)
+    assert snap.values["messages"]
+
+
+def test_resume_after_interruption(pg_saver) -> None:
+    from langgraph.checkpoint.postgres import PostgresSaver
+    cfg = {"configurable": {"thread_id": "t-resume"}}
+    with PostgresSaver.from_conn_string(pg_saver) as saver:
+        graph = build_graph(saver, _one_shot_model())
+        # NOTE: build_graph accepts interrupt_before for this test (see plan)
+        graph.invoke({"messages": [{"role": "user", "content": "hi"}]}, cfg)
+        # ... assert state.next == ("tools",) then invoke(None, cfg) completes
+        snap = graph.get_state(cfg)
+    assert snap is not None
+` },
+  };
+
+  for (const [id, file] of Object.entries(files)) {
+    new File(options).render({ containerWrapper: document.getElementById(id), file });
+  }
+</script>
+
+<!-- ============ Mermaid (theme-aware) ============ -->
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11.15.0/dist/mermaid.esm.min.mjs";
+  const darkQuery = window.matchMedia("(prefers-color-scheme: dark)");
+  const paint = document.createElement("canvas").getContext("2d");
+  function toRgba(color){paint.clearRect(0,0,1,1);paint.fillStyle="#000";paint.fillStyle=color;paint.fillRect(0,0,1,1);return paint.getImageData(0,0,1,1).data;}
+  function compositeRgba(f,b){const fa=f[3]/255,ba=b[3]/255,a=fa+ba*(1-fa);if(a===0)return[0,0,0,0];return[(f[0]*fa+b[0]*ba*(1-fa))/a,(f[1]*fa+b[1]*ba*(1-fa))/a,(f[2]*fa+b[2]*ba*(1-fa))/a,a*255];}
+  function pageIsDark(){const root=document.documentElement;const rb=toRgba(getComputedStyle(root).backgroundColor);const bb=document.body?toRgba(getComputedStyle(document.body).backgroundColor):[0,0,0,0];const[r,g,b,a]=compositeRgba(bb,rb);if(a>0)return(0.2126*r+0.7152*g+0.0722*b)/255<0.5;const cs=getComputedStyle(root).colorScheme;if(cs.includes("dark")&&!cs.includes("light"))return true;if(cs.includes("light")&&!cs.includes("dark"))return false;return darkQuery.matches;}
+  const diagrams=[...document.querySelectorAll(".mermaid")].map((el)=>({el,src:el.textContent}));
+  let applied,rendering=false,queued=false;
+  function queueRender(){queued=true;if(rendering)return;void render();}
+  async function render(){rendering=true;try{while(queued){queued=false;const theme=pageIsDark()?"dark":"default";if(theme===applied)continue;mermaid.initialize({startOnLoad:false,theme,securityLevel:"strict"});for(const{el,src}of diagrams){el.removeAttribute("data-processed");el.textContent=src;}try{await mermaid.run({nodes:diagrams.map((d)=>d.el)});}catch(e){console.error(e);return;}applied=theme;}}finally{rendering=false;if(queued)queueRender();}}
+  if(document.readyState==="complete")queueRender();else window.addEventListener("load",queueRender,{once:true});
+  const mo=new MutationObserver(queueRender);for(const el of[document.documentElement,document.body]){if(el)mo.observe(el,{attributes:true,attributeFilter:["data-theme","class","style"]});}
+  document.addEventListener("change",queueRender,true);
+  darkQuery.addEventListener("change",queueRender);
+</script>
+
+</body>
+</html>

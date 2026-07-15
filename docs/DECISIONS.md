@@ -111,3 +111,26 @@ overkill for a solo base build; add later if needed.
 - Validators / the moat → **packs** (base has eval machinery only, see D3)
 - Themes / prompts / rules → **packs**
 **Status:** active.
+
+### D14 — `take_last` is pure last-write-wins (refines the plan's "non-None wins")
+**Decision:** the `take_last` reducer for scalar state fields (`plan`, `error_reason`) returns the
+LATEST write unconditionally — including `None`. The Sprint 0.5 Lavish plan described it as "last
+*non-None* write wins"; we changed it because the error-recovery loop needs to CLEAR `error_reason`.
+**Why:** flow is `agent --(error)--> error_handler --(retry)--> agent`. `error_reason` is set by a
+failed agent step and routed on by `should_continue`. If it could never be cleared (non-None-wins),
+a *successful* retry would leave the stale error set → `should_continue` would re-route to
+`error_handler` forever. So the agent's SUCCESS path writes `error_reason: None` and `take_last`
+honours it. The reducer's other job — making a concurrent scalar write legal (no "concurrent write,
+no reducer" crash) — is unchanged. Only one node writes each scalar per super-step in the base graph,
+so plain last-write-wins loses nothing.
+**Status:** active.
+
+### D15 — Base ships a no-op placeholder `call_model`; real adapter is the S1 llm slot
+**Decision:** the graph's `agent` node takes an INJECTED `call_model`. `main.py`'s lifespan injects a
+tiny `_placeholder_model` (returns a tool-less assistant message) so `/api/chat` is runnable
+end-to-end. The concrete LiteLLM-backed adapter is Sprint 1 (the llm slot).
+**Why:** keeps the base domain-clean (no real model baked in, mirrors the `tools` no-op placeholder)
+while still letting the whole graph + checkpointer + endpoint run and be tested. Tests inject their
+own stateless fake `call_model` (a function of the transcript, so it survives resume across a fresh
+graph). Consistent with D13 (concrete LLM adapter → S1).
+**Status:** active.
