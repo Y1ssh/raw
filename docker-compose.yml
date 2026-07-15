@@ -1,0 +1,44 @@
+# Raw — local full-stack infra. Start with: make up  (postgres + redis)
+# Backend/frontend containers are here too but usually run via `make dev` in development.
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: raw
+      POSTGRES_PASSWORD: raw
+      POSTGRES_DB: raw
+    ports: ["5432:5432"]
+    volumes: ["raw_pgdata:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U raw"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  redis:
+    image: redis:7
+    ports: ["6379:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # Optional vector DB (packs enable retrieval). Uncomment to use Qdrant.
+  # qdrant:
+  #   image: qdrant/qdrant:latest
+  #   ports: ["6333:6333"]
+  #   volumes: ["raw_qdrant:/qdrant/storage"]
+
+  backend:
+    build: ./apps/backend
+    env_file: .env
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    ports: ["8077:8077"]
+    profiles: ["full"]   # only starts with: docker compose --profile full up
+
+volumes:
+  raw_pgdata:
+  # raw_qdrant:
